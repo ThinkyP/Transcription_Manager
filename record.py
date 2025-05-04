@@ -4,9 +4,9 @@ import signal
 from datetime import datetime
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QPushButton, QTableWidget, QTableWidgetItem,
-    QHBoxLayout, QLabel, QHeaderView
+    QHeaderView
 )
-from PyQt5.QtGui import QIcon, QFont, QColor, QPalette
+from PyQt5.QtGui import QIcon
 from PyQt5.QtCore import QSize, QTimer, Qt
 import os
 import whisper
@@ -18,11 +18,10 @@ class AudioRecorder(QWidget):
         super().__init__()
         self.setWindowTitle("🎙️ Recorder Studio")
         self.setGeometry(600, 300, 700, 500)
-        self.monitor_source = "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor"  # Replace as needed
+        self.monitor_source = "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor"
         self.process = None
         self.output_file = ""
 
-        # Dark Mode Styling
         self.setStyleSheet("""
             QWidget {
                 background-color: #121212;
@@ -55,14 +54,12 @@ class AudioRecorder(QWidget):
 
         self.layout = QVBoxLayout()
 
-        # Record button
         self.record_button = QPushButton("▶ Start Recording")
         self.record_button.setIcon(QIcon.fromTheme("media-record"))
         self.record_button.setIconSize(QSize(24, 24))
         self.record_button.clicked.connect(self.toggle_recording)
         self.layout.addWidget(self.record_button, alignment=Qt.AlignCenter)
 
-        # Table for recordings
         self.table = QTableWidget()
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Filename", "", ""])
@@ -74,13 +71,15 @@ class AudioRecorder(QWidget):
 
         self.setLayout(self.layout)
         self.is_recording = False
-
         self.timer = QTimer()
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self.check_process)
 
         self.recordings_dir = os.path.join(os.getcwd(), "recordings")
         os.makedirs(self.recordings_dir, exist_ok=True)
+
+        self.currently_playing = None
+        self.current_play_button = None
 
         self.refresh_recordings()
 
@@ -129,28 +128,56 @@ class AudioRecorder(QWidget):
 
             play_button = QPushButton("▶")
             play_button.setMaximumWidth(40)
-            play_button.clicked.connect(lambda _, f=filename: self.play_audio(f))
+            play_button.clicked.connect(lambda _, f=filename, b=play_button: self.toggle_play(f, b))
             self.table.setCellWidget(i, 1, play_button)
 
             transcribe_button = QPushButton("✎")
             transcribe_button.setMaximumWidth(40)
-            transcribe_button.clicked.connect(lambda _, f=filename: self.transcribe_audio(f))
+            transcribe_button.clicked.connect(lambda _, f=filename, b=transcribe_button: self.transcribe_audio(f, b))
             self.table.setCellWidget(i, 2, transcribe_button)
 
-    def play_audio(self, filename):
+    def toggle_play(self, filename, button):
+        if self.currently_playing and self.current_play_button == button:
+            self.currently_playing.stop()
+            button.setText("▶")
+            self.currently_playing = None
+            self.current_play_button = None
+            return
+
+        if self.currently_playing:
+            self.currently_playing.stop()
+            if self.current_play_button:
+                self.current_play_button.setText("▶")
+            self.currently_playing = None
+            self.current_play_button = None
+
         path = os.path.join(self.recordings_dir, filename)
         wave_obj = sa.WaveObject.from_wave_file(path)
         play_obj = wave_obj.play()
-        play_obj.wait_done()
 
-    def transcribe_audio(self, filename):
+        self.currently_playing = play_obj
+        self.current_play_button = button
+        button.setText("■")
+
+        def monitor_playback():
+            play_obj.wait_done()
+            if self.current_play_button == button:
+                button.setText("▶")
+                self.currently_playing = None
+                self.current_play_button = None
+
+        threading.Thread(target=monitor_playback, daemon=True).start()
+
+    def transcribe_audio(self, filename, button):
         def run_transcription():
             path = os.path.join(self.recordings_dir, filename)
+            button.setStyleSheet("background-color: orange; color: black;")
             model = whisper.load_model("base")
             result = model.transcribe(path)
             txt_file = os.path.join(self.recordings_dir, filename.replace(".wav", ".txt"))
             with open(txt_file, "w", encoding="utf-8") as f:
                 f.write(result["text"])
+            button.setStyleSheet("")
         threading.Thread(target=run_transcription).start()
 
 if __name__ == '__main__':
